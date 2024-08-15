@@ -19,7 +19,12 @@ INPUT_QUEUE_MAXSIZE = 60
 PORT = 9099
 NUM_TOKENS = 2
 DNN_ONES_SIZE = (1, 3, 96, 96)
-THRESHOLD = 0.4
+THRESHOLD = 0.6
+BB_COLOR = (0, 255, 0)
+LABEL_TEXT_COLOR = (255, 255, 255)
+LABEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
+LABEL_FONT_SCALE = 0.6
+LABEL_FONT_THICKNESS = 1
 
 SERVER_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_MODEL_DIR = os.path.join(SERVER_DIR, 'models')
@@ -92,8 +97,8 @@ class FaceEngine(cognitive_engine.Engine):
             self.t2 = time.time()
             logger.debug('Neural network forward pass took {:.3f} seconds.'.format(self.t2 - self.t1))
             self.t1 = self.t2
-            reps.append((bb.center().x, rep))
-        sorted_reps = sorted(reps, key=lambda x: x[0])
+            reps.append(((bb.left(), bb.top(), bb.right(), bb.bottom()), rep))
+        sorted_reps = sorted(reps, key=lambda x: x[0][0])
         return sorted_reps
 
     def handle(self, input_frame):
@@ -113,10 +118,11 @@ class FaceEngine(cognitive_engine.Engine):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         reps = self.get_reps(img)
+        face_results = []
         if len(reps) > 1:
             logger.info('List of faces in image from left to right:')
         for face in reps:
-            bbx = face[0]
+            bb = face[0]
             rep = face[1].reshape(1, -1)
 
             predictions = self.clf.predict_proba(rep).ravel()
@@ -127,19 +133,36 @@ class FaceEngine(cognitive_engine.Engine):
             logger.debug('Prediction took {:.3f} seconds.'.format(self.t3 - self.t2))
             self.t2 = self.t3
             if self._multi_face:
-                logger.info('Predict {} @ x={} with {:.2f} confidence.'.format(person, bbx, confidence))
+                logger.info('Predict {} @ x={} with {:.2f} confidence.'.format(person, bb[0], confidence))
             else:
                 logger.info('Predict {} with {:.2f} confidence.'.format(person, confidence))
 
-            # TODO: Draw bounding box with labels and conf on the image using OpenCV if conf > thres
-            # cv2.rectangle(im, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            # cv2.putText(im, 'Moth Detected', (x + w + 10, y + h), 0, 0.3, (0, 255, 0))
+            if confidence < THRESHOLD:
+                person = 'unknown'
+            img = cv2.rectangle(img, (bb[0], bb[1]), (bb[2], bb[3]), BB_COLOR, 2)
+            label = '{}: {:.0%}'.format(person, confidence)
+            face_results.append(label)
+            (label_w, label_h), baseline = cv2.getTextSize(label, LABEL_FONT,
+                                                           LABEL_FONT_SCALE, LABEL_FONT_THICKNESS)
+            label_left, label_top = bb[0], bb[1] - label_h - baseline
+            label_right, label_bottom = bb[0] + label_w, bb[1]
+            img = cv2.rectangle(img, (label_left, label_top), (label_right, label_bottom), BB_COLOR, -1)
+            img = cv2.putText(img, label, (label_left, label_bottom - baseline), LABEL_FONT,
+                              LABEL_FONT_SCALE, LABEL_TEXT_COLOR, LABEL_FONT_THICKNESS)
+
             img_to_send = img
             img_to_send = cv2.cvtColor(img_to_send, cv2.COLOR_RGB2BGR)
             _, jpeg_img = cv2.imencode('.jpg', img_to_send)
             img_data = jpeg_img.tobytes()
 
         # Return the annotated image, or the original image if no faces were found
+        if len(face_results) > 0:
+            face_results_text = ','.join(face_results)
+            result = gabriel_pb2.ResultWrapper.Result()
+            result.payload_type = gabriel_pb2.PayloadType.TEXT
+            result.payload = face_results_text.encode()
+            result_wrapper.results.append(result)
+
         result = gabriel_pb2.ResultWrapper.Result()
         result.payload_type = gabriel_pb2.PayloadType.IMAGE
         result.payload = img_data
