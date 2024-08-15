@@ -16,6 +16,9 @@ import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.function.Consumer;
 
 import edu.cmu.cs.gabriel.camera.CameraCapture;
@@ -32,14 +35,17 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private static final String SOURCE = "openface";
     private static final int PORT = 9099;
-    private static final int WIDTH = 320;  // 1920;
-    private static final int HEIGHT = 240;  // 1080;
+    private static final int WIDTH = 640;  // 1920;
+    private static final int HEIGHT = 480;  // 1080;
     private ServerComm serverComm;
     private YuvToJPEGConverter yuvToJPEGConverter;
     private CameraCapture cameraCapture;
     private TextToSpeech textToSpeech;
     private ImageViewUpdater annotationViewUpdater;
     private boolean readyForServer = false;
+    private HashMap<String, Long> faceRecognized = new HashMap<>();
+    private static final long nameTTSCoolDownTime = 3 * 60 * 1000L;
+    private static final int confidenceThreshold = 70;
 
     private final Consumer<ResultWrapper> consumer = resultWrapper -> {
 //        try {
@@ -60,14 +66,42 @@ public class MainActivity extends AppCompatActivity {
 
             // Load the user guidance (audio, image/video) from the result wrapper
             for (ResultWrapper.Result result : resultWrapper.getResultsList()) {
-                if ((result.getPayloadType() == PayloadType.IMAGE)) {
+                if (result.getPayloadType() == PayloadType.IMAGE) {
                     ByteString annotatedJpeg = result.getPayload();
                     annotationViewUpdater.accept(annotatedJpeg);
+                } else if (result.getPayloadType() == PayloadType.TEXT) {
+                    ByteString faceResults = result.getPayload();
+                    String faceResultsString = faceResults.toStringUtf8();
+                    speakOutNames(faceResultsString);
                 }
             }
-            // TODO: Also speak out the names of people recognized returned from the server as
-            //       text strings (do not repeat the same names within 5 minutes?)
     };
+
+    private void speakOutNames(String faceResultsString) {
+        String[] facesStrings = faceResultsString.split(",");
+        List<String> namesToSpeakOut = new ArrayList<>();
+        long currentTime = System.currentTimeMillis();
+        for (String faceString: facesStrings) {
+            String[] faceResult = faceString.split(": ");
+            String name = faceResult[0];
+            int confidence = Integer.parseInt(faceResult[1].replace("%", ""));
+            Log.i(TAG, "Detected: [" + name + "] " + confidence + "%");
+
+            // Do not repeat the same names within <nameTTSCoolDownTime>
+            if (confidence > confidenceThreshold) {
+                if (!faceRecognized.containsKey(name) ||
+                        currentTime - faceRecognized.get(name) > nameTTSCoolDownTime) {
+                    faceRecognized.put(name, currentTime);
+                    namesToSpeakOut.add(name);
+                }
+            }
+        }
+        if (namesToSpeakOut.size() > 0) {
+            String speech = "Probably: " + String.join(" and ", namesToSpeakOut);
+            this.textToSpeech.speak(speech, TextToSpeech.QUEUE_ADD, null, null);
+            Log.i(TAG, "Saying: " + speech);
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
