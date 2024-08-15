@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">FaceRecognizer</string>
+    <string name="annotation_view_description">Annotated video with faces detected</string>
+</resources>
