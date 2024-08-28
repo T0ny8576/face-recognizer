@@ -8,8 +8,8 @@
 
     <ImageView
         android:id="@+id/annotationView"
-        android:layout_width="320dp"
-        android:layout_height="240dp"
+        android:layout_width="480dp"
+        android:layout_height="360dp"
         android:contentDescription="@string/annotation_view_description"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -18,11 +18,22 @@
 
     <androidx.camera.view.PreviewView
         android:id="@+id/viewFinder"
-        android:layout_width="320dp"
-        android:layout_height="240dp"
+        android:layout_width="480dp"
+        android:layout_height="360dp"
         android:visibility="invisible"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <ImageView
+        android:id="@+id/imgSwitchCam"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="top|end"
+        android:elevation="16dp"
+        android:focusable="false"
+        android:src="@drawable/ic_cached_black_24dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 

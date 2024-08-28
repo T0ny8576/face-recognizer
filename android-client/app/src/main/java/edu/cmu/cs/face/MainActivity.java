@@ -10,6 +10,7 @@ import androidx.camera.view.PreviewView;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
 import android.util.Log;
+import android.view.View;
 import android.widget.ImageView;
 
 import com.google.protobuf.Any;
@@ -35,14 +36,15 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private static final String SOURCE = "openface";
     private static final int PORT = 9099;
-    private static final int WIDTH = 640;  // 1920;
-    private static final int HEIGHT = 480;  // 1080;
+    private static final int WIDTH = 1280;  // (320, 640, 1280, 1920)
+    private static final int HEIGHT = 720;  // (240, 480, 720, 1080)
     private ServerComm serverComm;
     private YuvToJPEGConverter yuvToJPEGConverter;
     private CameraCapture cameraCapture;
     private TextToSpeech textToSpeech;
     private ImageViewUpdater annotationViewUpdater;
     private boolean readyForServer = false;
+    private boolean useBackCamera = true;
     private HashMap<String, Long> faceRecognized = new HashMap<>();
     private static final long nameTTSCoolDownTime = 3 * 60 * 1000L;
     private static final int confidenceThreshold = 70;
@@ -111,6 +113,7 @@ public class MainActivity extends AppCompatActivity {
         ImageView annotationView = findViewById(R.id.annotationView);
         annotationViewUpdater = new ImageViewUpdater(annotationView);
         PreviewView viewFinder = findViewById(R.id.viewFinder);
+        ImageView camButton = findViewById(R.id.imgSwitchCam);
 
         Consumer<ErrorType> onDisconnect = errorType -> {
             Log.e(TAG, "Disconnect Error: " + errorType.name());
@@ -135,7 +138,23 @@ public class MainActivity extends AppCompatActivity {
         };
         this.textToSpeech = new TextToSpeech(getApplicationContext(), onInitListener);
         yuvToJPEGConverter = new YuvToJPEGConverter(this, 100);
-        cameraCapture = new CameraCapture(this, analyzer, WIDTH, HEIGHT, viewFinder, CameraSelector.DEFAULT_BACK_CAMERA, false);
+
+        camButton.setOnClickListener(v -> {
+            if (useBackCamera) {
+                cameraCapture = new CameraCapture(
+                        MainActivity.this, analyzer, WIDTH, HEIGHT, viewFinder,
+                        CameraSelector.DEFAULT_FRONT_CAMERA, false);
+                useBackCamera = false;
+            } else {
+                cameraCapture = new CameraCapture(
+                        MainActivity.this, analyzer, WIDTH, HEIGHT, viewFinder,
+                        CameraSelector.DEFAULT_BACK_CAMERA, false);
+                useBackCamera = true;
+            }
+        });
+
+        cameraCapture = new CameraCapture(this, analyzer, WIDTH, HEIGHT, viewFinder,
+                CameraSelector.DEFAULT_BACK_CAMERA, false);
     }
 
     // Based on
