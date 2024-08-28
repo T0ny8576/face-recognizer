@@ -21,14 +21,15 @@ NUM_TOKENS = 2
 DNN_ONES_SIZE = (1, 3, 96, 96)
 THRESHOLD = 0.6
 BB_COLOR = (0, 255, 0)
-LABEL_TEXT_COLOR = (255, 255, 255)
+LABEL_TEXT_COLOR = (0, 0, 0)
 LABEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
 LABEL_FONT_SCALE = 0.6
 LABEL_FONT_THICKNESS = 1
 
 SERVER_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_MODEL_DIR = os.path.join(SERVER_DIR, 'models')
-DEFAULT_DLIB_MODEL_PATH = os.path.join(DEFAULT_MODEL_DIR, 'shape_predictor_68_face_landmarks.dat')
+DEFAULT_DLIB_FACE_PREDICTOR_PATH = os.path.join(DEFAULT_MODEL_DIR, 'shape_predictor_68_face_landmarks.dat')
+DEFAULT_DLIB_FACE_DETECTOR_PATH = os.path.join(DEFAULT_MODEL_DIR, 'mmod_human_face_detector.dat')
 DEFAULT_OPENFACE_MODEL_PATH = os.path.join(DEFAULT_MODEL_DIR, 'nn4.small2.v1.pt')
 DEFAULT_CLASSIFIER_PATH = os.path.join(DEFAULT_MODEL_DIR, 'classifier.pkl')
 
@@ -36,18 +37,19 @@ global logger
 
 
 class FaceEngine(cognitive_engine.Engine):
-    def __init__(self, dlib_model_path, openface_model_path, classifier_path, multi_face=False, cpu=False):
+    def __init__(self, dlib_face_predictor, dlib_face_detector, openface_model, classifier,
+                 upsampling, multi_face=False, cpu=False):
         self._device = 'cpu' if cpu else 'cuda'
         self._multi_face = multi_face
-        self.dlib_model = openface.AlignDlib(dlib_model_path)
+        self.dlib_model = openface.AlignDlib(dlib_face_predictor, dlib_face_detector, upsample=upsampling)
         self.openface_model = openface.OpenFaceNet()
         if self._device == 'cuda':
-            self.openface_model.load_state_dict(torch.load(openface_model_path, map_location='cuda'))
+            self.openface_model.load_state_dict(torch.load(openface_model, map_location='cuda'))
             self.openface_model.to(torch.device('cuda'))
         else:
-            self.openface_model.load_state_dict(torch.load(openface_model_path))
+            self.openface_model.load_state_dict(torch.load(openface_model))
         self.openface_model.eval()
-        with open(classifier_path, 'rb') as classifier_file:
+        with open(classifier, 'rb') as classifier_file:
             self.le, self.clf = pickle.load(classifier_file)
 
         # Warm up the GPU
@@ -117,7 +119,7 @@ class FaceEngine(cognitive_engine.Engine):
         img = cv2.imdecode(np_data, cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        reps = self.get_reps(img)
+        reps = self.get_reps(img, multiple=self._multi_face)
         face_results = []
         if len(reps) > 1:
             logger.info('List of faces in image from left to right:')
@@ -172,7 +174,10 @@ class FaceEngine(cognitive_engine.Engine):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dlib_model_path', type=str, default=DEFAULT_DLIB_MODEL_PATH)
+    parser.add_argument('--dlib_face_predictor_path', type=str, default=DEFAULT_DLIB_FACE_PREDICTOR_PATH)
+    parser.add_argument('--dlib_face_detector_type', type=str, choices=['HOG', 'CNN'], default='CNN')
+    parser.add_argument('--dlib_face_detector_path', type=str, default=DEFAULT_DLIB_FACE_DETECTOR_PATH)
+    parser.add_argument('--upsample', type=int, default=1)
     parser.add_argument('--openface_model_path', type=str, default=DEFAULT_OPENFACE_MODEL_PATH)
     parser.add_argument('--classifier_path', type=str, default=DEFAULT_CLASSIFIER_PATH)
     parser.add_argument('--multi_face', action='store_true')
@@ -187,9 +192,12 @@ def main():
     global logger
     logger = logging.getLogger(__name__)
 
+    if args.dlib_face_detector_type == 'HOG':
+        args.dlib_face_detector_path = None
+
     def engine_factory():
-        return FaceEngine(args.dlib_model_path, args.openface_model_path, args.classifier_path,
-                          args.multi_face, args.cpu)
+        return FaceEngine(args.dlib_face_predictor_path, args.dlib_face_detector_path, args.openface_model_path,
+                          args.classifier_path, args.upsample, args.multi_face, args.cpu)
 
     local_engine.run(engine_factory, SOURCE_NAME, INPUT_QUEUE_MAXSIZE, PORT, NUM_TOKENS)
 
