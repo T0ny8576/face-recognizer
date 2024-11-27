@@ -2,8 +2,8 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-NUM_TOTAL_FRAME_DEFAULT = 501
 NUM_FRAME_DISCARDED = 4
+NUM_TOTAL_FRAME_DEFAULT = 500 + NUM_FRAME_DISCARDED
 
 
 def plot_histogram(data, xlabel, ylabel, fname, bins=40, dpi=300, x_range=None):
@@ -35,15 +35,22 @@ def plot_individual_timeline(per_frame_data, ylabel, fname, frame_to_plot=None):
     plt.close(fig)
 
 
-def plot_trial(server_log_file, client_log_file, log_dir, plot_detailed_figures):
+def plot_trial(server_log_file, client_log_file, log_dir, plot_detailed_figures, client_ip=None):
+    num_arrays = 9
     (client_gen, client_send, client_recv, client_done,
-     server_recv, server_done, server_pre, server_detect,
-     server_repr, server_infer, server_post, server_total, server_wait) = (
-        tuple(np.squeeze(arr) for arr in np.split(np.zeros((13, NUM_TOTAL_FRAME_DEFAULT)), 13, axis=0)))
+     server_recv, server_start, server_finish,
+     client_payload, server_payload) = (
+        tuple(np.squeeze(arr) for arr in np.split(np.zeros((num_arrays, NUM_TOTAL_FRAME_DEFAULT)), num_arrays, axis=0)))
+    client_gen_csv_str = "id,gen\n"
     with open(os.path.join(log_dir, client_log_file), "r") as client_log:
         client_lines = client_log.readlines()
         for cl in client_lines:
             cls = cl.split()
+
+            # Collect client gen time for measuring camera latency
+            if "Gen" in cl and "Failed" not in cl:
+                client_gen_csv_str += "{},{}\n".format(int(cls[0]), int(cls[-1]))
+
             if cls[0] in [str(i + 1) for i in range(NUM_FRAME_DISCARDED)]:
                 continue
             if "Gen" in cl and "Failed" not in cl:
@@ -55,73 +62,81 @@ def plot_trial(server_log_file, client_log_file, log_dir, plot_detailed_figures)
             elif "Done" in cl:
                 client_done[int(cls[0]) - NUM_FRAME_DISCARDED - 1] = int(cls[-1])
 
+    with open(os.path.join(log_dir, "client_gen.csv"), "w") as csv_out:
+        csv_out.write(client_gen_csv_str)
+
     with open(os.path.join(log_dir, server_log_file), "r") as server_log:
         server_lines = server_log.readlines()
         for sl in server_lines:
             if len(sl.strip()) > 0:
-                sls = sl.split(", ")
-                if sls[0] in ["#" + str(i + 1) for i in range(NUM_FRAME_DISCARDED)]:
-                    continue
-                idx = int(sls[0].replace("#", "")) - NUM_FRAME_DISCARDED - 1
-                server_recv[idx] = float(sls[1].replace("time = ", "")) * 1000
-                server_done[idx] = float(sls[2].replace("done = ", "")) * 1000
-                server_pre[idx] = float(sls[3].replace("pre = ", "").replace(" ms", ""))
-                server_detect[idx] = float(sls[4].replace("detect = ", "").replace(" ms", ""))
-                server_repr[idx] = float(sls[5].replace("repr = ", "").replace(" ms", ""))
-                server_infer[idx] = float(sls[6].replace("infer = ", "").replace(" ms", ""))
-                server_post[idx] = float(sls[7].replace("post = ", "").replace(" ms", ""))
-                server_wait[idx] = float(sls[8].replace("wait = ", "").replace(" ms", ""))
-                server_total[idx] = server_done[idx] - server_recv[idx]
+                sls = sl.split(",")
 
-    num_frames = min(sum(client_done > 0), sum(server_done > 0))
+                if sls[3] in [str(i) for i in range(NUM_FRAME_DISCARDED + 1)]:
+                    continue
+                if client_ip is not None:
+                    if sls[1].strip("('") != client_ip:
+                        continue
+
+                idx = int(sls[3].replace("#", "")) - NUM_FRAME_DISCARDED - 1
+                if sls[0] == "Arrive":
+                    server_recv[idx] = int(sls[-1])
+                elif sls[0] == "Start":
+                    server_start[idx] = int(sls[-1])
+                elif sls[0] == "Finish":
+                    server_finish[idx] = int(sls[-1])
+                elif sls[0] == "ClientBytes":
+                    client_payload[idx] = int(sls[-1])
+                elif sls[0] == "ServerBytes":
+                    server_payload[idx] = int(sls[-1])
+
+    num_frames = min(sum(client_done > 0), sum(server_finish > 0))
     print(num_frames)
     client_gen = client_gen[:num_frames]
     client_send = client_send[:num_frames]
     client_recv = client_recv[:num_frames]
     client_done = client_done[:num_frames]
     server_recv = server_recv[:num_frames]
-    server_done = server_done[:num_frames]
-    server_pre = server_pre[:num_frames]
-    server_detect = server_detect[:num_frames]
-    server_repr = server_repr[:num_frames]
-    server_infer = server_infer[:num_frames]
-    server_post = server_post[:num_frames]
-    server_total = server_total[:num_frames]
+    server_start = server_start[:num_frames]
+    server_finish = server_finish[:num_frames]
+    client_payload = client_payload[:num_frames]
+    server_payload = server_payload[:num_frames]
 
-    server_wait = server_wait[1:num_frames]
     client_fps = [1000. / (client_done[i + 1] - client_done[i]) for i in range(num_frames - 1)]
 
     client_pre = [client_send[fid] - client_gen[fid] for fid in range(num_frames)]
     client_post = [client_done[fid] - client_recv[fid] for fid in range(num_frames)]
+    server_queue = [server_start[fid] - server_recv[fid] for fid in range(num_frames)]
+    server_proc = [server_finish[fid] - server_start[fid] for fid in range(num_frames)]
+    server_idle = [server_start[fid + 1] - server_start[fid] for fid in range(num_frames - 1)]
     net_uplink = [server_recv[fid] - client_send[fid] for fid in range(num_frames)]
-    net_downlink = [client_recv[fid] - server_done[fid] for fid in range(num_frames)]
+    net_downlink = [client_recv[fid] - server_finish[fid] for fid in range(num_frames)]
     net_total = [net_uplink[fid] + net_downlink[fid] for fid in range(num_frames)]
     frame_total = [client_done[fid] - client_gen[fid] for fid in range(num_frames)]
-    stacked = np.stack([client_pre, net_uplink, server_pre, server_detect, server_repr, server_infer,
-                        server_post, net_downlink, client_post])
+    stacked = np.stack([client_pre, net_uplink, server_queue, server_proc,
+                        net_downlink, client_post])
 
     if plot_detailed_figures:
         """ Individual histograms
         """
         plot_histogram(client_pre, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "client_pre.png"))
         plot_histogram(client_post, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "client_post.png"))
-        plot_histogram(server_pre, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_pre.png"))
-        plot_histogram(server_detect, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_detect.png"))
-        plot_histogram(server_repr, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_repr.png"))
-        plot_histogram(server_infer, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_infer.png"))
-        plot_histogram(server_post, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_post.png"))
-        plot_histogram(server_wait, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_wait.png"))
-        plot_histogram(server_total, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_total.png"))
+        plot_histogram(server_queue, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_queue.png"))
+        plot_histogram(server_proc, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_proc.png"))
+        plot_histogram(server_idle, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "server_idle.png"))
         plot_histogram(net_uplink, 'Latency (ms)', 'Frame Count', os.path.join(log_dir, "net_uplink.png"))
         plot_histogram(net_downlink, 'Latency (ms)', 'Frame Count', os.path.join(log_dir, "net_downlink.png"))
         plot_histogram(net_total, 'Latency (ms)', 'Frame Count', os.path.join(log_dir, "net_total.png"))
         plot_histogram(frame_total, 'Time (ms)', 'Frame Count', os.path.join(log_dir, "frame_total.png"))
         plot_histogram(client_fps, 'FPS', 'Frame Count', os.path.join(log_dir, "client_fps.png"), x_range=[0, 60])
+        plot_histogram(client_payload / 1000., 'Payload Size (KB)', 'Frame Count',
+                       os.path.join(log_dir, "client_payload.png"))
+        plot_histogram(server_payload / 1000., 'Payload Size (KB)', 'Frame Count',
+                       os.path.join(log_dir, "server_payload.png"))
 
         """ Per-frame individual timeline 
         """
-        plot_individual_timeline(server_infer, 'Inference Time (ms)',
-                                 os.path.join(log_dir, "server_infer_timeline.png"))
+        plot_individual_timeline(server_proc, 'Server Processing Time (ms)',
+                                 os.path.join(log_dir, "server_proc_timeline.png"))
         plot_individual_timeline(net_uplink, 'Uplink Latency (ms)',
                                  os.path.join(log_dir, "net_uplink_timeline.png"))
         plot_individual_timeline(net_downlink, 'Downlink Latency (ms)',
@@ -129,14 +144,13 @@ def plot_trial(server_log_file, client_log_file, log_dir, plot_detailed_figures)
 
         """ Per-frame stacked timeline
         """
-        labels = ["client_pre", "net_uplink", "server_pre", "server_detect", "server_repr", "server_infer",
-                  "server_post", "net_downlink", "client_post"]
+        labels = ["client_pre", "net_uplink", "server_queue", "server_proc", "net_downlink", "client_post"]
         fig, ax = plt.subplots()
         ax.set_xlabel('Frame Id')
         num_chosen = num_frames
         ax.set_xlim(0, num_chosen)
         ax.set_ylabel('Latency (ms)')
-        ax.set_title('End-to-end Delay Distribution per Frame')
+        ax.set_title('End-to-end Latency Distribution on Each Frame')
         fig.set_figwidth(50)
 
         bottom = np.zeros(num_chosen)
@@ -162,7 +176,14 @@ def plot_trial(server_log_file, client_log_file, log_dir, plot_detailed_figures)
 
 if __name__ == "__main__":
     BASEDIR = os.path.dirname(os.path.abspath(__file__))
-    LOGDIR = os.path.join(BASEDIR, "logs/", "wifi_cloudlet_720p/")
-    CLIENT_LOG = "Client-Timing.txt"
-    SERVER_LOG = "Server-Log.txt"
-    plot_trial(SERVER_LOG, CLIENT_LOG, LOGDIR, True)
+    LOGDIR = os.path.join(BASEDIR, "logs/", "wifi_720p/")
+    CLIENT_LOG = "Client.txt"
+
+    user_ip = None
+    # user_ip = "172.26.111.182"
+    # user_ip = "172.26.50.76"
+    # user_ip = "172.26.53.209"
+    # user_ip = "172.26.111.147"
+
+    SERVER_LOG = "Server.txt"
+    plot_trial(SERVER_LOG, CLIENT_LOG, LOGDIR, True, user_ip)

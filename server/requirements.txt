@@ -1,4 +1,5 @@
 gabriel-server
 protobuf~=3.20
 numpy~=1.24
-matplotlib
+matplotlib     # For plotting only
+psutil         # For profiling only
