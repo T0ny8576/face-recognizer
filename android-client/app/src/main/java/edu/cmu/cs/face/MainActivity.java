@@ -77,6 +77,8 @@ public class MainActivity extends AppCompatActivity {
     private long lastNtpOffset = 0L;
     public boolean ntpReceived = false;
     public ConnectivityManager connectivityManager;
+    private static final int APP_NETWORK_TRANSPORT_TYPE = NetworkCapabilities.TRANSPORT_WIFI;
+    private static final int NTP_NETWORK_TRANSPORT_TYPE = NetworkCapabilities.TRANSPORT_WIFI;
 
     // Latency Profiling
     private static final int PROFILING_COUNT = 500;
@@ -210,9 +212,10 @@ public class MainActivity extends AppCompatActivity {
         PreviewView viewFinder = findViewById(R.id.viewFinder);
         ImageView camButton = findViewById(R.id.imgSwitchCam);
 
-        // Connect to network and run the app
+        // Connect to network via the specific transport type
         NetworkRequest appNetworkRequest = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addTransportType(APP_NETWORK_TRANSPORT_TYPE)
                 .build();
         connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         ConnectivityManager.NetworkCallback appNetworkCallback = new ConnectivityManager.NetworkCallback() {
@@ -236,7 +239,7 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
 
-        yuvToJPEGConverter = new YuvToJPEGConverter(this, 100);
+        yuvToJPEGConverter = new YuvToJPEGConverter(this, 90);
         camButton.setOnClickListener(v -> {
             if (useBackCamera) {
                 cameraCapture = new CameraCapture(
@@ -257,6 +260,7 @@ public class MainActivity extends AppCompatActivity {
     void setupComm() {
         NetworkRequest ntpNetworkRequest = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addTransportType(NTP_NETWORK_TRANSPORT_TYPE)
                 .build();
         ConnectivityManager.NetworkCallback ntpNetworkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
@@ -322,7 +326,10 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 SendSupplierResult result = serverComm.sendSupplier(() -> {
+//                    long jpegEncodingStart = SystemClock.elapsedRealtime();
                     ByteString jpegByteString = yuvToJPEGConverter.convert(image);
+//                    long jpegEncodingPeriod = SystemClock.elapsedRealtime() - jpegEncodingStart;
+//                    Log.w(TAG, "JPEG encoding takes " + jpegEncodingPeriod + " ms.\n");
 
 //                ToServerExtras toServerExtras = ToServerExtras.newBuilder()
 //                        .setStep(MainActivity.this.step)
